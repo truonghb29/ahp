@@ -1,0 +1,14 @@
+ Cho may windows thang nao MacBook thi tu tim cach CD nha
+Password : 123
+chạy terminal với quyền admin
+cd C:\Program Files\PostgreSQL\17\bin
+createdb -U postgres -h localhost recruitment_ahp
+psql -U postgres -h localhost -d recruitment_ahp < C:\recruitment_ahp_backup.sql
+
+hoặc tải từ file nào thì từ sau < chỉnh lại nha.
+
+Kết nối vào database psql -U postgres -h localhost -d recruitment_ahp
+
+Kiểm tra dữ liệu : 
+\dt
+SELECT * FROM recruitment_rounds;
