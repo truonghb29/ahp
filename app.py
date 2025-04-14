@@ -7,7 +7,11 @@ from datetime import datetime
 app = Flask(__name__)
 
 # Cấu hình kết nối PostgreSQL
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:123@localhost:5432/recruitment_ahp'
+# app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:123@localhost:5432/recruitment_ahp'
+# app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+#Cấu hình kết nối MySQL
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:1234@localhost:3306/recruitment_ahp'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Khởi tạo SQLAlchemy
