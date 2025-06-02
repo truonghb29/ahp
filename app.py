@@ -263,6 +263,72 @@ def calculate_consistency_ratio(matrix):
     cr = ci / ri
     return cr
 
+def calculate_detailed_consistency_metrics(matrix):
+    """Tính toán chi tiết các chỉ số nhất quán: Lambda max, CI, CR và vector nhất quán"""
+    matrix = np.array(matrix, dtype=float)
+    n = matrix.shape[0]
+    
+    if n == 0:
+        return {
+            'lambda_max': 0.0,
+            'ci': 0.0,
+            'cr': 0.0,
+            'consistency_vector': np.array([]),
+            'ri': 0.0
+        }
+    
+    if n <= 2:
+        weights = calculate_priority_vector(matrix)
+        return {
+            'lambda_max': n,
+            'ci': 0.0,
+            'cr': 0.0,
+            'consistency_vector': weights,
+            'ri': 0.0
+        }
+    
+    weights = calculate_priority_vector(matrix)
+    if weights.size == 0 or weights.shape[0] != n:
+        return {
+            'lambda_max': float('inf'),
+            'ci': float('inf'),
+            'cr': float('inf'),
+            'consistency_vector': np.array([]),
+            'ri': ri_values.get(n, 1.59)
+        }
+    
+    # Tính lambda_max
+    aw = np.dot(matrix, weights)
+    if np.any(weights == 0):
+        lambda_max = n
+    else:
+        lambda_max = np.mean(aw / weights)
+    
+    # Tính CI (Consistency Index)
+    if n - 1 == 0:
+        ci = 0.0
+    else:
+        ci = (lambda_max - n) / (n - 1)
+    
+    # Lấy RI (Random Index)
+    ri = ri_values.get(n)
+    if ri is None:
+        ri = ri_values.get(15, 1.59)
+    
+    # Tính CR (Consistency Ratio)
+    if ri == 0:
+        cr = 0.0 if ci == 0 else float('inf')
+    else:
+        cr = ci / ri
+    
+    return {
+        'lambda_max': lambda_max,
+        'ci': ci,
+        'cr': cr,
+        'consistency_vector': weights,
+        'ri': ri
+    }
+
 # --- CÁC BIẾN TOÀN CỤC CŨ (Đã comment out hoặc sẽ được thay thế) ---
 # criteria = ["Kiến thức chuyên môn", ...] 
 # num_criteria_global = len(criteria) # (Sử dụng tên khác để tránh nhầm lẫn với num_criteria trong session)
@@ -1109,6 +1175,29 @@ def calculate_final_ranking():
     if cand_scores_for_chart and cand_names_for_chart:
         candidate_score_image = create_candidate_scores_chart(cand_scores_for_chart, cand_names_for_chart)
     
+    # Tính toán các chỉ số chi tiết cho ma trận tiêu chí
+    criteria_matrix = session.get('pairwise_matrix_criteria', [])
+    criteria_detailed_metrics = None
+    if criteria_matrix:
+        try:
+            criteria_detailed_metrics = calculate_detailed_consistency_metrics(criteria_matrix)
+        except Exception as e:
+            print(f"Error calculating criteria detailed metrics: {e}")
+    
+    # Tính toán các chỉ số chi tiết cho ma trận ứng viên
+    candidate_matrices_detailed_metrics = []
+    for idx, detail in enumerate(candidate_matrices_details):
+        if detail and 'matrix' in detail:
+            try:
+                detailed_metrics = calculate_detailed_consistency_metrics(detail['matrix'])
+                detailed_metrics['criterion_name'] = detail.get('criterion_name', criteria_names[idx] if idx < len(criteria_names) else f'Tiêu chí {idx+1}')
+                candidate_matrices_detailed_metrics.append(detailed_metrics)
+            except Exception as e:
+                print(f"Error calculating detailed metrics for criterion {idx}: {e}")
+                candidate_matrices_detailed_metrics.append(None)
+        else:
+            candidate_matrices_detailed_metrics.append(None)
+    
     # Các biểu đồ khác bạn có thể tạo tương tự
     # pairwise_matrix_image = create_pairwise_matrix_visualization(np.array(session.get('pairwise_matrix_criteria', [])), criteria_names)
     # consistency_chart_image = create_consistency_chart(cr_criteria)
@@ -1127,7 +1216,9 @@ def calculate_final_ranking():
                            inconsistent_candidate_matrices_info=inconsistent_candidate_matrices_info,
                            pairwise_matrix_criteria=session.get('pairwise_matrix_criteria', []),
                            criterion_weights_image=criterion_weights_image,
-                           candidate_score_image=candidate_score_image
+                           candidate_score_image=candidate_score_image,
+                           criteria_detailed_metrics=criteria_detailed_metrics,
+                           candidate_matrices_detailed_metrics=candidate_matrices_detailed_metrics
                            # Thêm các ảnh khác nếu có
                            )
 
@@ -1201,7 +1292,7 @@ def create_candidate_scores_chart(scores, candidate_names):
 # (Cần cập nhật để tương thích với dữ liệu mới, ví dụ: các tiêu chí động,
 # ma trận so sánh ứng viên được lưu trong session hoặc DB nếu bạn mở rộng)
 
-from fpdf import FPDF # Đảm bảo import FPDF
+# from fpdf2 import FPDF # Đảm bảo import FPDF
 import tempfile
 import os
 
