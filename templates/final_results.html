@@ -13,6 +13,21 @@
         .cr-ok { color: green; font-weight: bold; }
         .cr-bad { color: red; font-weight: bold; }
         .accordion-button:not(.collapsed) { color: #0c63e4; background-color: #e7f1ff; }
+        .consistency-metrics { 
+            background: linear-gradient(135deg, #e3f2fd 0%, #f1f8ff 100%);
+            border-radius: 8px;
+            padding: 12px;
+            margin: 8px 0;
+        }
+        .lambda-max { color: #1976d2; font-weight: 600; }
+        .ci-value { color: #0288d1; font-weight: 600; }
+        .ri-value { color: #757575; font-weight: 500; }
+        .consistency-vector-item {
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 4px;
+            padding: 4px 8px;
+            margin: 2px 0;
+        }
     </style>
 </head>
 <body>
@@ -124,6 +139,44 @@
                                     <span class="{{ 'cr-ok' if cr_criteria < 0.1 else 'cr-bad' }}">{{ "%.4f"|format(cr_criteria) }}</span>
                                 </p>
                                 {% endif %}
+                                {% if criteria_detailed_metrics %}
+                                <div class="mt-3 consistency-metrics">
+                                    <h6><i class="bi bi-calculator"></i> Chi tiết tính nhất quán ma trận tiêu chí:</h6>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <ul class="list-group list-group-sm">
+                                                <li class="list-group-item d-flex justify-content-between">
+                                                    <strong>λ max (Lambda max):</strong>
+                                                    <span class="lambda-max">{{ "%.4f"|format(criteria_detailed_metrics.lambda_max) }}</span>
+                                                </li>
+                                                <li class="list-group-item d-flex justify-content-between">
+                                                    <strong>CI (Consistency Index):</strong>
+                                                    <span class="ci-value">{{ "%.4f"|format(criteria_detailed_metrics.ci) }}</span>
+                                                </li>
+                                                <li class="list-group-item d-flex justify-content-between">
+                                                    <strong>RI (Random Index):</strong>
+                                                    <span class="ri-value">{{ "%.4f"|format(criteria_detailed_metrics.ri) }}</span>
+                                                </li>
+                                                <li class="list-group-item d-flex justify-content-between">
+                                                    <strong>CR (Consistency Ratio):</strong>
+                                                    <span class="{{ 'text-success fw-bold' if criteria_detailed_metrics.cr < 0.1 else 'text-danger fw-bold' }}">{{ "%.4f"|format(criteria_detailed_metrics.cr) }}</span>
+                                                </li>
+                                            </ul>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <h6><i class="bi bi-arrow-right-circle"></i> Vector nhất quán (Eigenvector):</h6>
+                                            <div class="consistency-vector-item">
+                                                {% for i in range(criteria_names|length) %}
+                                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                                    <small class="text-muted">{{ criteria_names[i][:15] + '...' if criteria_names[i]|length > 15 else criteria_names[i] }}</small>
+                                                    <span class="badge bg-primary rounded-pill">{{ "%.4f"|format(criteria_detailed_metrics.consistency_vector[i]) }}</span>
+                                                </div>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endif %}
                             </div>
                             <div class="col-lg-7">
                                 {% if pairwise_matrix_criteria %}
@@ -171,6 +224,47 @@
                             <div class="mb-4 p-3 border rounded bg-light shadow-sm">
                                 <h5>Tiêu chí: <span class="text-primary fw-semibold">{{ detail.criterion_name }}</span></h5>
                                 <p class="mb-1"><strong>CR ma trận ứng viên:</strong> <span class="{{ 'cr-ok' if detail.cr < 0.1 else 'cr-bad' }}">{{ "%.4f"|format(detail.cr) }}</span></p>
+                                
+                                {# Hiển thị chi tiết tính nhất quán cho ma trận ứng viên #}
+                                {% set detailed_metrics = candidate_matrices_detailed_metrics[loop.index0] if candidate_matrices_detailed_metrics and loop.index0 < candidate_matrices_detailed_metrics|length else None %}
+                                {% if detailed_metrics %}
+                                <div class="mb-3 consistency-metrics">
+                                    <h6><i class="bi bi-calculator"></i> Chi tiết tính nhất quán:</h6>
+                                    <div class="row">
+                                        <div class="col-lg-4">
+                                            <ul class="list-group list-group-sm mb-2">
+                                                <li class="list-group-item d-flex justify-content-between">
+                                                    <strong>λ max:</strong>
+                                                    <span class="lambda-max">{{ "%.4f"|format(detailed_metrics.lambda_max) }}</span>
+                                                </li>
+                                                <li class="list-group-item d-flex justify-content-between">
+                                                    <strong>CI:</strong>
+                                                    <span class="ci-value">{{ "%.4f"|format(detailed_metrics.ci) }}</span>
+                                                </li>
+                                                <li class="list-group-item d-flex justify-content-between">
+                                                    <strong>RI:</strong>
+                                                    <span class="ri-value">{{ "%.4f"|format(detailed_metrics.ri) }}</span>
+                                                </li>
+                                            </ul>
+                                        </div>
+                                        <div class="col-lg-8">
+                                            <h6><i class="bi bi-arrow-right-circle"></i> Vector nhất quán (Eigenvector):</h6>
+                                            <div class="consistency-vector-item">
+                                                <div class="row">
+                                                    {% for k_idx in range(candidate_names|length) %}
+                                                    <div class="col-md-6 mb-1">
+                                                        <small class="d-flex justify-content-between">
+                                                            <span class="text-muted">{{ candidate_names[k_idx][:12] + '...' if candidate_names[k_idx]|length > 12 else candidate_names[k_idx] }}</span>
+                                                            <span class="badge bg-secondary">{{ "%.4f"|format(detailed_metrics.consistency_vector[k_idx]) }}</span>
+                                                        </small>
+                                                    </div>
+                                                    {% endfor %}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endif %}
                                 <div class="row mt-2">
                                     <div class="col-lg-5">
                                         <h6>Trọng số cục bộ của ứng viên:</h6>
