@@ -116,9 +116,9 @@
                 <img src="data:image/png;base64,{{ criteria_comparison_image }}" class="img-fluid" alt="So sánh tiêu chí">
             </div>
         </div>
-        
-        <div class="text-center mb-5">
+          <div class="text-center mb-5">
             <a href="{{ url_for('export_report', round_id=round_id) }}" class="btn btn-primary">Xuất báo cáo PDF</a>
+            <a href="{{ url_for('export_excel', round_id=round_id) }}" class="btn btn-success ml-2">Xuất dữ liệu Excel</a>
             <a href="{{ url_for('history') }}" class="btn btn-secondary ml-2">Xem lịch sử</a>
             <a href="{{ url_for('index') }}" class="btn btn-info ml-2">Tạo đợt tuyển dụng mới</a>
         </div>

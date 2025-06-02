@@ -8,26 +8,14 @@ import matplotlib
 matplotlib.use('Agg')  # Sử dụng Agg backend cho matplotlib
 import io
 import base64
-from matplotlib.backends.backend_agg import FigureCanvas
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import pandas as pd
 import seaborn as sns
 from openpyxl import Workbook, load_workbook
 from werkzeug.utils import secure_filename
 import os
-# from flask import session # Không cần import lại nếu đã có ở dòng đầuort Flask, render_template, request, redirect, url_for, send_file, session, flash
-from flask_sqlalchemy import SQLAlchemy
-import json
-import numpy as np
-from datetime import datetime
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')  # Sử dụng Agg backend cho matplotlib
-import io
-import base64
-from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-import pandas as pd
-import seaborn as sns
-# from flask import session # Không cần import lại nếu đã có ở dòng đầu
+import tempfile
+from fpdf import FPDF
 
 app = Flask(__name__)
 app.secret_key = '105008truonganhminhtrong' # Thay bằng chuỗi bí mật thực sự
@@ -46,7 +34,7 @@ def allowed_file(filename):
 # Cấu hình kết nối MySQL
 # app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:Theanh412%40@localhost:3306/recruitment_ahp'
 # app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:truong123@localhost:3306/recruitment_ahp'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:Theanh412%40@localhost:3306/recruitment_ahp'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -694,8 +682,7 @@ def input_candidate_comparison_for_criterion(criterion_idx):
             'weights': weights_candidate_local.tolist(),
             'criterion_name': current_criterion_name
         }
-        session['candidate_pairwise_matrices_details'] = candidate_matrices_details
-
+        session['candidate_pairwise_matrices_details'] = candidate_matrices_details        
         if cr_candidate >= 0.1:
             flash(f"CR cho ứng viên theo tiêu chí '{current_criterion_name}' ({cr_candidate:.4f}) >= 0.1. Vui lòng kiểm tra lại.", "warning")
             return render_template('input_candidate_comparison.html',
@@ -1205,6 +1192,148 @@ from fpdf import FPDF # Đảm bảo import FPDF
 import tempfile
 import os
 
+@app.route('/export_excel/<int:round_id>')
+def export_excel(round_id):
+    """Xuất tất cả dữ liệu ra file Excel"""
+    try:
+        round_info = RecruitmentRound.query.get_or_404(round_id)
+        criteria_list_db = RecruitmentCriteria.query.filter_by(round_id=round_id).all()
+        criteria_matrix_db = CriteriaMatrix.query.filter_by(round_id=round_id).first()
+        candidate_scores_db = CandidateScore.query.filter_by(round_id=round_id).order_by(CandidateScore.ranking).all()
+        candidates_db = Candidate.query.filter_by(round_id=round_id).all()
+
+        # Tạo workbook mới
+        wb = Workbook()
+        
+        # Sheet 1: Thông tin đợt tuyển dụng
+        ws_info = wb.active
+        ws_info.title = "Thông tin đợt tuyển dụng"
+        ws_info['A1'] = "Tên đợt tuyển dụng"
+        ws_info['B1'] = round_info.round_name
+        ws_info['A2'] = "Vị trí"
+        ws_info['B2'] = round_info.position
+        ws_info['A3'] = "Mô tả"
+        ws_info['B3'] = round_info.description or ""
+        ws_info['A4'] = "Ngày tạo"
+        ws_info['B4'] = round_info.created_at.strftime("%d/%m/%Y %H:%M:%S")        # Sheet 2: Trọng số tiêu chí
+        if criteria_matrix_db and criteria_matrix_db.matrix_data:
+            ws_criteria = wb.create_sheet("Trọng số tiêu chí")
+            matrix_data = criteria_matrix_db.matrix_data
+            # Ensure matrix_data is a dictionary (parse if it's a JSON string)
+            if isinstance(matrix_data, str):
+                matrix_data = json.loads(matrix_data)
+            criteria_names = matrix_data.get("criteria_names_at_creation", [c.criterion_name for c in criteria_list_db])
+            weights = matrix_data.get("weights", [])
+            
+            # Headers
+            ws_criteria['A1'] = "Tiêu chí"
+            ws_criteria['B1'] = "Trọng số"
+            
+            # Data
+            for i, (name, weight) in enumerate(zip(criteria_names, weights), 2):
+                ws_criteria[f'A{i}'] = name
+                ws_criteria[f'B{i}'] = weight
+            
+            # Consistency ratio
+            ws_criteria[f'A{len(criteria_names)+3}'] = "Chỉ số nhất quán (CR)"
+            ws_criteria[f'B{len(criteria_names)+3}'] = criteria_matrix_db.consistency_ratio        # Sheet 3: Ma trận so sánh cặp tiêu chí
+        if criteria_matrix_db and criteria_matrix_db.matrix_data:
+            ws_matrix = wb.create_sheet("Ma trận so sánh tiêu chí")
+            matrix_data = criteria_matrix_db.matrix_data
+            # Ensure matrix_data is a dictionary (parse if it's a JSON string)
+            if isinstance(matrix_data, str):
+                matrix_data = json.loads(matrix_data)
+            criteria_names = matrix_data.get("criteria_names_at_creation", [c.criterion_name for c in criteria_list_db])
+            pairwise_matrix = matrix_data.get("matrix", [])
+            
+            # Headers (thêm cột rỗng đầu tiên)
+            ws_matrix['A1'] = ""
+            for j, name in enumerate(criteria_names, 2):
+                ws_matrix.cell(row=1, column=j, value=name)
+            
+            # Data với tên tiêu chí ở cột đầu
+            for i, (name, row_data) in enumerate(zip(criteria_names, pairwise_matrix), 2):
+                ws_matrix.cell(row=i, column=1, value=name)
+                for j, value in enumerate(row_data, 2):
+                    ws_matrix.cell(row=i, column=j, value=value)
+
+        # Sheet 4: Danh sách ứng viên
+        ws_candidates = wb.create_sheet("Danh sách ứng viên")
+        ws_candidates['A1'] = "STT"
+        ws_candidates['B1'] = "Tên ứng viên"
+        ws_candidates['C1'] = "Ghi chú"
+        
+        for i, candidate in enumerate(candidates_db, 2):
+            ws_candidates[f'A{i}'] = i - 1
+            ws_candidates[f'B{i}'] = candidate.full_name
+            ws_candidates[f'C{i}'] = candidate.notes or ""
+
+        # Sheet 5: Kết quả xếp hạng
+        if candidate_scores_db:
+            ws_ranking = wb.create_sheet("Kết quả xếp hạng")
+            ws_ranking['A1'] = "Thứ hạng"
+            ws_ranking['B1'] = "Tên ứng viên"
+            ws_ranking['C1'] = "Điểm tổng hợp"
+            
+            for i, score_entry in enumerate(candidate_scores_db, 2):
+                candidate_info = Candidate.query.get(score_entry.candidate_id)
+                ws_ranking[f'A{i}'] = score_entry.ranking
+                ws_ranking[f'B{i}'] = candidate_info.full_name if candidate_info else 'N/A'
+                ws_ranking[f'C{i}'] = score_entry.total_score
+
+        # Lấy thêm dữ liệu ma trận so sánh ứng viên từ session nếu có
+        if session.get('candidate_pairwise_matrices_details'):
+            candidate_matrices_details = session.get('candidate_pairwise_matrices_details', [])
+            criteria_names_session = session.get('criteria_names', [])
+            candidate_names_session = session.get('candidate_names', [])
+            
+            for idx, detail in enumerate(candidate_matrices_details):
+                if detail is not None:
+                    criterion_name = detail.get('criterion_name', criteria_names_session[idx] if idx < len(criteria_names_session) else f'Tiêu chí {idx+1}')
+                    matrix = detail.get('matrix', [])
+                    cr = detail.get('cr', 0)
+                    
+                    # Tạo sheet cho mỗi ma trận so sánh ứng viên
+                    sheet_name = f"Ma trận UC - {criterion_name}"[:31]  # Excel sheet name limit
+                    ws_candidate_matrix = wb.create_sheet(sheet_name)
+                    
+                    # Headers
+                    ws_candidate_matrix['A1'] = ""
+                    for j, name in enumerate(candidate_names_session, 2):
+                        ws_candidate_matrix.cell(row=1, column=j, value=name)
+                    
+                    # Data
+                    for i, (name, row_data) in enumerate(zip(candidate_names_session, matrix), 2):
+                        ws_candidate_matrix.cell(row=i, column=1, value=name)
+                        for j, value in enumerate(row_data, 2):
+                            ws_candidate_matrix.cell(row=i, column=j, value=value)
+                    
+                    # Consistency ratio
+                    ws_candidate_matrix.cell(row=len(candidate_names_session)+3, column=1, value="Chỉ số nhất quán (CR)")
+                    ws_candidate_matrix.cell(row=len(candidate_names_session)+3, column=2, value=cr)
+
+        # Lưu file tạm và trả về
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            excel_path = tmp.name
+            wb.save(excel_path)
+        
+        return send_file(
+            excel_path,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f'DuLieu_AHP_{round_info.round_name.replace(" ", "_")}.xlsx'
+        )
+    
+    except Exception as e:
+        flash(f"Lỗi khi tạo file Excel: {e}", "danger")
+        return redirect(url_for('round_detail', round_id=round_id))
+    finally:
+        if 'excel_path' in locals() and os.path.exists(excel_path):
+            try:
+                os.unlink(excel_path)
+            except Exception as e_unlink:
+                app.logger.error(f"Could not remove temp excel file {excel_path}: {e_unlink}")
+
 @app.route('/export_report/<int:round_id>')
 def export_report(round_id):
     round_info = RecruitmentRound.query.get_or_404(round_id)
@@ -1228,11 +1357,12 @@ def export_report(round_id):
     if round_info.description:
         pdf.multi_cell(0, 10, f'Mô tả: {round_info.description}') # Dùng multi_cell cho text dài
     pdf.cell(0, 10, f'Ngày tạo: {round_info.created_at.strftime("%d/%m/%Y %H:%M:%S")}', 0, 1)
-    pdf.ln(5)
-
-    # Trọng số và CR của Tiêu chí
+    pdf.ln(5)    # Trọng số và CR của Tiêu chí
     if criteria_matrix_db and criteria_matrix_db.matrix_data:
         matrix_data = criteria_matrix_db.matrix_data # Đây là dict từ JSON
+        # Ensure matrix_data is a dictionary (parse if it's a JSON string)
+        if isinstance(matrix_data, str):
+            matrix_data = json.loads(matrix_data)
         criteria_names_from_matrix = matrix_data.get("criteria_names_at_creation", [c.criterion_name for c in criteria_list_db])
         weights_criteria = matrix_data.get("weights", [])
         
