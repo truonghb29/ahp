@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file, session, flash
+from flask import Flask, render_template, request, redirect, url_for, send_file, session, flash, jsonify
 from flask_sqlalchemy import SQLAlchemy
 import json
 import numpy as np
@@ -12,6 +12,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import pandas as pd
 import seaborn as sns
 from openpyxl import Workbook, load_workbook
+from openpyxl.chart import BarChart, Reference, PieChart
 from werkzeug.utils import secure_filename
 import os
 import tempfile
@@ -250,6 +251,72 @@ def calculate_consistency_ratio(matrix):
              
     cr = ci / ri
     return cr
+
+def calculate_detailed_consistency_metrics(matrix):
+    """Tính toán chi tiết các chỉ số nhất quán: Lambda max, CI, CR và vector nhất quán"""
+    matrix = np.array(matrix, dtype=float)
+    n = matrix.shape[0]
+    
+    if n == 0:
+        return {
+            'lambda_max': 0.0,
+            'ci': 0.0,
+            'cr': 0.0,
+            'consistency_vector': np.array([]),
+            'ri': 0.0
+        }
+    
+    if n <= 2:
+        weights = calculate_priority_vector(matrix)
+        return {
+            'lambda_max': n,
+            'ci': 0.0,
+            'cr': 0.0,
+            'consistency_vector': weights,
+            'ri': 0.0
+        }
+    
+    weights = calculate_priority_vector(matrix)
+    if weights.size == 0 or weights.shape[0] != n:
+        return {
+            'lambda_max': float('inf'),
+            'ci': float('inf'),
+            'cr': float('inf'),
+            'consistency_vector': np.array([]),
+            'ri': ri_values.get(n, 1.59)
+        }
+    
+    # Tính lambda_max
+    aw = np.dot(matrix, weights)
+    if np.any(weights == 0):
+        lambda_max = n
+    else:
+        lambda_max = np.mean(aw / weights)
+    
+    # Tính CI (Consistency Index)
+    if n - 1 == 0:
+        ci = 0.0
+    else:
+        ci = (lambda_max - n) / (n - 1)
+    
+    # Lấy RI (Random Index)
+    ri = ri_values.get(n)
+    if ri is None:
+        ri = ri_values.get(15, 1.59)
+    
+    # Tính CR (Consistency Ratio)
+    if ri == 0:
+        cr = 0.0 if ci == 0 else float('inf')
+    else:
+        cr = ci / ri
+    
+    return {
+        'lambda_max': lambda_max,
+        'ci': ci,
+        'cr': cr,
+        'consistency_vector': weights,
+        'ri': ri
+    }
 
 # --- CÁC BIẾN TOÀN CỤC CŨ (Đã comment out hoặc sẽ được thay thế) ---
 # criteria = ["Kiến thức chuyên môn", ...] 
@@ -684,7 +751,7 @@ def input_candidate_comparison_for_criterion(criterion_idx):
         }
         session['candidate_pairwise_matrices_details'] = candidate_matrices_details        
         if cr_candidate >= 0.1:
-            flash(f"CR cho ứng viên theo tiêu chí '{current_criterion_name}' ({cr_candidate:.4f}) >= 0.1. Vui lòng kiểm tra lại.", "warning")
+            flash(f"CR cho ứng viên theo tiêu chí '{current_criterion_name}' ({cr_candidate:.4f}) >= 0.1. Vui lòng kiểm tra lại.", "warning")            
             return render_template('input_candidate_comparison.html',
                                    criterion_name=current_criterion_name,
                                    criterion_idx=criterion_idx,
@@ -899,18 +966,13 @@ def import_candidate_matrix(criterion_idx):
                     'criterion_name': current_criterion_name
                 }
                 session['candidate_pairwise_matrices_details'] = candidate_matrices_details
-                
                 if cr_candidate >= 0.1:
                     flash(f'Ma trận đã được import nhưng CR ({cr_candidate:.4f}) >= 0.1. Vui lòng kiểm tra lại.', 'warning')
                 else:
                     flash(f'Đã import thành công ma trận cho tiêu chí "{current_criterion_name}" (CR = {cr_candidate:.4f})', 'success')
-                    
-                    # Chuyển đến tiêu chí tiếp theo hoặc trang kết quả
-                    next_criterion_idx = criterion_idx + 1
-                    if next_criterion_idx < len(criteria_names):
-                        return redirect(url_for('input_candidate_comparison_for_criterion', criterion_idx=next_criterion_idx))
-                    else:
-                        return redirect(url_for('calculate_final_ranking'))
+                
+                # Ở lại trang hiện tại để người dùng có thể xem kết quả tính toán
+                return redirect(url_for('input_candidate_comparison_for_criterion', criterion_idx=criterion_idx))
                         
             except Exception as e:
                 flash(f'Lỗi xử lý file: {str(e)}', 'danger')
@@ -1055,7 +1117,7 @@ def calculate_final_ranking():
         else: # Lỗi, gán trọng số bằng nhau
             flash(f"Lỗi kích thước trọng số ứng viên cho tiêu chí '{criteria_names[crit_idx]}'. Đã đặt giá trị mặc định.", "warning")
             candidate_performance_matrix[:, crit_idx] = np.ones(num_candidates) / num_candidates
-
+    
     final_scores = candidate_performance_matrix @ weights_criteria
     
     ranked_candidates_list = []
@@ -1310,9 +1372,7 @@ def export_excel(round_id):
                     
                     # Consistency ratio
                     ws_candidate_matrix.cell(row=len(candidate_names_session)+3, column=1, value="Chỉ số nhất quán (CR)")
-                    ws_candidate_matrix.cell(row=len(candidate_names_session)+3, column=2, value=cr)
-
-        # Lưu file tạm và trả về
+                    ws_candidate_matrix.cell(row=len(candidate_names_session)+3, column=2, value=cr)        # Lưu file tạm và trả về
         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
             excel_path = tmp.name
             wb.save(excel_path)
@@ -1326,6 +1386,199 @@ def export_excel(round_id):
     
     except Exception as e:
         flash(f"Lỗi khi tạo file Excel: {e}", "danger")
+        return redirect(url_for('round_detail', round_id=round_id))
+    finally:
+        if 'excel_path' in locals() and os.path.exists(excel_path):
+            try:
+                os.unlink(excel_path)
+            except Exception as e_unlink:
+                app.logger.error(f"Could not remove temp excel file {excel_path}: {e_unlink}")
+
+@app.route('/export_excel_with_charts/<int:round_id>')
+def export_excel_with_charts(round_id):
+    """Xuất tất cả dữ liệu ra file Excel có kèm biểu đồ"""
+    try:
+        round_info = RecruitmentRound.query.get_or_404(round_id)
+        criteria_list_db = RecruitmentCriteria.query.filter_by(round_id=round_id).all()
+        criteria_matrix_db = CriteriaMatrix.query.filter_by(round_id=round_id).first()
+        candidate_scores_db = CandidateScore.query.filter_by(round_id=round_id).order_by(CandidateScore.ranking).all()
+        candidates_db = Candidate.query.filter_by(round_id=round_id).all()
+
+        # Tạo workbook mới
+        wb = Workbook()
+        
+        # Sheet 1: Thông tin đợt tuyển dụng
+        ws_info = wb.active
+        ws_info.title = "Thông tin đợt tuyển dụng"
+        ws_info['A1'] = "Tên đợt tuyển dụng"
+        ws_info['B1'] = round_info.round_name
+        ws_info['A2'] = "Vị trí"
+        ws_info['B2'] = round_info.position
+        ws_info['A3'] = "Mô tả"
+        ws_info['B3'] = round_info.description or ""
+        ws_info['A4'] = "Ngày tạo"
+        ws_info['B4'] = round_info.created_at.strftime("%d/%m/%Y %H:%M:%S")
+
+        # Sheet 2: Trọng số tiêu chí với biểu đồ
+        if criteria_matrix_db and criteria_matrix_db.matrix_data:
+            ws_criteria = wb.create_sheet("Trọng số tiêu chí")
+            matrix_data = criteria_matrix_db.matrix_data
+            # Ensure matrix_data is a dictionary (parse if it's a JSON string)
+            if isinstance(matrix_data, str):
+                matrix_data = json.loads(matrix_data)
+            criteria_names = matrix_data.get("criteria_names_at_creation", [c.criterion_name for c in criteria_list_db])
+            weights = matrix_data.get("weights", [])
+            
+            # Headers
+            ws_criteria['A1'] = "Tiêu chí"
+            ws_criteria['B1'] = "Trọng số"
+            
+            # Data
+            for i, (name, weight) in enumerate(zip(criteria_names, weights), 2):
+                ws_criteria[f'A{i}'] = name
+                ws_criteria[f'B{i}'] = weight
+            
+            # Consistency ratio
+            ws_criteria[f'A{len(criteria_names)+3}'] = "Chỉ số nhất quán (CR)"
+            ws_criteria[f'B{len(criteria_names)+3}'] = criteria_matrix_db.consistency_ratio
+
+            # Tạo biểu đồ cột cho trọng số tiêu chí
+            if len(criteria_names) > 0 and len(weights) > 0:
+                chart1 = BarChart()
+                chart1.type = "col"
+                chart1.style = 10
+                chart1.title = "Trọng số các tiêu chí"
+                chart1.y_axis.title = 'Trọng số'
+                chart1.x_axis.title = 'Tiêu chí'
+
+                data = Reference(ws_criteria, min_col=2, min_row=1, max_row=len(criteria_names)+1, max_col=2)
+                cats = Reference(ws_criteria, min_col=1, min_row=2, max_row=len(criteria_names)+1)
+                chart1.add_data(data, titles_from_data=True)
+                chart1.set_categories(cats)
+                
+                # Đặt biểu đồ vào sheet
+                ws_criteria.add_chart(chart1, "D2")
+
+            # Tạo biểu đồ tròn cho trọng số tiêu chí
+            if len(criteria_names) > 0 and len(weights) > 0:
+                chart2 = PieChart()
+                chart2.title = "Phân bổ trọng số tiêu chí"
+                
+                data = Reference(ws_criteria, min_col=2, min_row=2, max_row=len(criteria_names)+1)
+                cats = Reference(ws_criteria, min_col=1, min_row=2, max_row=len(criteria_names)+1)
+                chart2.add_data(data, titles_from_data=False)
+                chart2.set_categories(cats)
+                
+                # Đặt biểu đồ vào sheet
+                ws_criteria.add_chart(chart2, "D18")
+
+        # Sheet 3: Ma trận so sánh cặp tiêu chí
+        if criteria_matrix_db and criteria_matrix_db.matrix_data:
+            ws_matrix = wb.create_sheet("Ma trận so sánh tiêu chí")
+            matrix_data = criteria_matrix_db.matrix_data
+            # Ensure matrix_data is a dictionary (parse if it's a JSON string)
+            if isinstance(matrix_data, str):
+                matrix_data = json.loads(matrix_data)
+            criteria_names = matrix_data.get("criteria_names_at_creation", [c.criterion_name for c in criteria_list_db])
+            pairwise_matrix = matrix_data.get("matrix", [])
+            
+            # Headers (thêm cột rỗng đầu tiên)
+            ws_matrix['A1'] = ""
+            for j, name in enumerate(criteria_names, 2):
+                ws_matrix.cell(row=1, column=j, value=name)
+            
+            # Data với tên tiêu chí ở cột đầu
+            for i, (name, row_data) in enumerate(zip(criteria_names, pairwise_matrix), 2):
+                ws_matrix.cell(row=i, column=1, value=name)
+                for j, value in enumerate(row_data, 2):
+                    ws_matrix.cell(row=i, column=j, value=value)
+
+        # Sheet 4: Danh sách ứng viên
+        ws_candidates = wb.create_sheet("Danh sách ứng viên")
+        ws_candidates['A1'] = "STT"
+        ws_candidates['B1'] = "Tên ứng viên"
+        ws_candidates['C1'] = "Ghi chú"
+        
+        for i, candidate in enumerate(candidates_db, 2):
+            ws_candidates[f'A{i}'] = i - 1
+            ws_candidates[f'B{i}'] = candidate.full_name
+            ws_candidates[f'C{i}'] = candidate.notes or ""
+
+        # Sheet 5: Kết quả xếp hạng
+        if candidate_scores_db:
+            ws_ranking = wb.create_sheet("Kết quả xếp hạng")
+            ws_ranking['A1'] = "Thứ hạng"
+            ws_ranking['B1'] = "Tên ứng viên"
+            ws_ranking['C1'] = "Điểm tổng hợp"
+            
+            for i, score_entry in enumerate(candidate_scores_db, 2):
+                candidate_info = Candidate.query.get(score_entry.candidate_id)
+                ws_ranking[f'A{i}'] = score_entry.ranking
+                ws_ranking[f'B{i}'] = candidate_info.full_name if candidate_info else 'N/A'
+                ws_ranking[f'C{i}'] = score_entry.total_score
+
+            # Tạo biểu đồ cột cho điểm số ứng viên
+            if len(candidate_scores_db) > 0:
+                chart3 = BarChart()
+                chart3.type = "col"
+                chart3.style = 12
+                chart3.title = "Điểm tổng hợp các ứng viên"
+                chart3.y_axis.title = 'Điểm số'
+                chart3.x_axis.title = 'Ứng viên'
+
+                data = Reference(ws_ranking, min_col=3, min_row=1, max_row=len(candidate_scores_db)+1, max_col=3)
+                cats = Reference(ws_ranking, min_col=2, min_row=2, max_row=len(candidate_scores_db)+1)
+                chart3.add_data(data, titles_from_data=True)
+                chart3.set_categories(cats)
+                
+                # Đặt biểu đồ vào sheet
+                ws_ranking.add_chart(chart3, "E2")
+
+        # Lấy thêm dữ liệu ma trận so sánh ứng viên từ session nếu có
+        if session.get('candidate_pairwise_matrices_details'):
+            candidate_matrices_details = session.get('candidate_pairwise_matrices_details', [])
+            criteria_names_session = session.get('criteria_names', [])
+            candidate_names_session = session.get('candidate_names', [])
+            
+            for idx, detail in enumerate(candidate_matrices_details):
+                if detail is not None:
+                    criterion_name = detail.get('criterion_name', criteria_names_session[idx] if idx < len(criteria_names_session) else f'Tiêu chí {idx+1}')
+                    matrix = detail.get('matrix', [])
+                    cr = detail.get('cr', 0)
+                    
+                    # Tạo sheet cho mỗi ma trận so sánh ứng viên
+                    sheet_name = f"Ma trận UC - {criterion_name}"[:31]  # Excel sheet name limit
+                    ws_candidate_matrix = wb.create_sheet(sheet_name)
+                    
+                    # Headers
+                    ws_candidate_matrix['A1'] = ""
+                    for j, name in enumerate(candidate_names_session, 2):
+                        ws_candidate_matrix.cell(row=1, column=j, value=name)
+                    
+                    # Data
+                    for i, (name, row_data) in enumerate(zip(candidate_names_session, matrix), 2):
+                        ws_candidate_matrix.cell(row=i, column=1, value=name)
+                        for j, value in enumerate(row_data, 2):
+                            ws_candidate_matrix.cell(row=i, column=j, value=value)
+                    
+                    # Consistency ratio
+                    ws_candidate_matrix.cell(row=len(candidate_names_session)+3, column=1, value="Chỉ số nhất quán (CR)")
+                    ws_candidate_matrix.cell(row=len(candidate_names_session)+3, column=2, value=cr)
+
+        # Lưu file tạm và trả về
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            excel_path = tmp.name
+            wb.save(excel_path)
+        
+        return send_file(
+            excel_path,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f'DuLieu_AHP_BieuDo_{round_info.round_name.replace(" ", "_")}.xlsx'
+        )
+    
+    except Exception as e:
+        flash(f"Lỗi khi tạo file Excel với biểu đồ: {e}", "danger")
         return redirect(url_for('round_detail', round_id=round_id))
     finally:
         if 'excel_path' in locals() and os.path.exists(excel_path):
@@ -1498,8 +1751,320 @@ def delete_round(round_id):
         flash(f"Lỗi khi xóa đợt tuyển dụng: {str(e)}", "danger")
     return redirect(url_for('history'))
 
+# API endpoint cho tính toán consistency real-time
+@app.route('/api/calculate_criteria_consistency', methods=['POST'])
+def api_calculate_criteria_consistency():
+    """API endpoint để tính toán consistency cho ma trận tiêu chí"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'matrix' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Matrix data không hợp lệ'
+            }), 400
+        
+        matrix_data = data['matrix']
+        n = len(matrix_data)
+        
+        # Validate matrix structure
+        if not all(len(row) == n for row in matrix_data):
+            return jsonify({
+                'success': False,
+                'error': 'Ma trận không vuông'
+            }), 400
+        
+        # Convert to numpy array
+        matrix = np.array(matrix_data, dtype=float)
+        
+        # Calculate detailed consistency metrics
+        metrics = calculate_detailed_consistency_metrics(matrix)
+        
+        # Calculate priority vector
+        priority_vector = calculate_priority_vector(matrix)
+        
+        return jsonify({
+            'success': True,
+            'lambda_max': float(metrics['lambda_max']),
+            'ci': float(metrics['ci']),
+            'cr': float(metrics['cr']),
+            'ri': float(metrics['ri']),
+            'priority_vector': priority_vector.tolist() if hasattr(priority_vector, 'tolist') else list(priority_vector),
+            'is_consistent': float(metrics['cr']) < 0.1
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Lỗi tính toán: {str(e)}'
+        }), 500
+
+@app.route('/api/calculate_candidate_consistency', methods=['POST'])
+def api_calculate_candidate_consistency():
+    """API endpoint để tính toán consistency cho ma trận ứng viên"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'matrix' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Matrix data không hợp lệ'
+            }), 400
+        
+        matrix_data = data['matrix']
+        n = len(matrix_data)
+        
+        # Validate matrix structure
+        if not all(len(row) == n for row in matrix_data):
+            return jsonify({
+                'success': False,
+                'error': 'Ma trận không vuông'
+            }), 400
+        
+        # Convert to numpy array
+        matrix = np.array(matrix_data, dtype=float)
+        
+        # Calculate detailed consistency metrics
+        metrics = calculate_detailed_consistency_metrics(matrix)
+        
+        # Calculate priority vector
+        priority_vector = calculate_priority_vector(matrix)
+        
+        return jsonify({
+            'success': True,
+            'lambda_max': float(metrics['lambda_max']),
+            'ci': float(metrics['ci']),
+            'cr': float(metrics['cr']),
+            'ri': float(metrics['ri']),
+            'priority_vector': priority_vector.tolist() if hasattr(priority_vector, 'tolist') else list(priority_vector),
+            'is_consistent': float(metrics['cr']) < 0.1
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Lỗi tính toán: {str(e)}'
+        }), 500
+
+@app.route('/export_excel_single_sheet/<int:round_id>')
+def export_excel_single_sheet(round_id):
+    """Xuất tất cả dữ liệu ra file Excel trong 1 sheet duy nhất"""
+    try:
+        round_info = RecruitmentRound.query.get_or_404(round_id)
+        criteria_list_db = RecruitmentCriteria.query.filter_by(round_id=round_id).all()
+        criteria_matrix_db = CriteriaMatrix.query.filter_by(round_id=round_id).first()
+        candidate_scores_db = CandidateScore.query.filter_by(round_id=round_id).order_by(CandidateScore.ranking).all()
+        candidates_db = Candidate.query.filter_by(round_id=round_id).all()
+
+        # Tạo workbook với 1 sheet duy nhất
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Báo cáo AHP tổng hợp"
+        
+        current_row = 1
+        
+        # Phần 1: Thông tin đợt tuyển dụng
+        ws[f'A{current_row}'] = "=== THÔNG TIN ĐỢT TUYỂN DỤNG ==="
+        ws[f'A{current_row}'].font = ws[f'A{current_row}'].font.copy(bold=True, size=14)
+        current_row += 1
+        
+        ws[f'A{current_row}'] = "Tên đợt:"
+        ws[f'B{current_row}'] = round_info.round_name
+        current_row += 1
+        
+        ws[f'A{current_row}'] = "Vị trí:"
+        ws[f'B{current_row}'] = round_info.position
+        current_row += 1
+        
+        ws[f'A{current_row}'] = "Mô tả:"
+        ws[f'B{current_row}'] = round_info.description or ""
+        current_row += 1
+        
+        ws[f'A{current_row}'] = "Ngày tạo:"
+        ws[f'B{current_row}'] = round_info.created_at.strftime("%d/%m/%Y %H:%M:%S")
+        current_row += 3
+        
+        # Phần 2: Kết quả xếp hạng (phần quan trọng nhất)
+        if candidate_scores_db:
+            ws[f'A{current_row}'] = "=== KẾT QUẢ XẾP HẠNG ==="
+            ws[f'A{current_row}'].font = ws[f'A{current_row}'].font.copy(bold=True, size=14)
+            current_row += 1
+            
+            # Headers
+            ws[f'A{current_row}'] = "Thứ hạng"
+            ws[f'B{current_row}'] = "Tên ứng viên"
+            ws[f'C{current_row}'] = "Điểm tổng hợp"
+            
+            # Make header bold
+            for col in ['A', 'B', 'C']:
+                ws[f'{col}{current_row}'].font = ws[f'{col}{current_row}'].font.copy(bold=True)
+            current_row += 1
+            
+            # Data
+            for score_entry in candidate_scores_db:
+                candidate_info = Candidate.query.get(score_entry.candidate_id)
+                ws[f'A{current_row}'] = score_entry.ranking
+                ws[f'B{current_row}'] = candidate_info.full_name if candidate_info else 'N/A'
+                ws[f'C{current_row}'] = round(score_entry.total_score, 4)
+                current_row += 1
+            
+            current_row += 2
+        
+        # Phần 3: Trọng số tiêu chí
+        if criteria_matrix_db and criteria_matrix_db.matrix_data:
+            ws[f'A{current_row}'] = "=== TRỌNG SỐ TIÊU CHÍ ==="
+            ws[f'A{current_row}'].font = ws[f'A{current_row}'].font.copy(bold=True, size=14)
+            current_row += 1
+            
+            matrix_data = criteria_matrix_db.matrix_data
+            if isinstance(matrix_data, str):
+                matrix_data = json.loads(matrix_data)
+            criteria_names = matrix_data.get("criteria_names_at_creation", [c.criterion_name for c in criteria_list_db])
+            weights = matrix_data.get("weights", [])
+            
+            # Headers
+            ws[f'A{current_row}'] = "Tiêu chí"
+            ws[f'B{current_row}'] = "Trọng số"
+            ws[f'C{current_row}'] = "Tỷ lệ %"
+            
+            # Make header bold
+            for col in ['A', 'B', 'C']:
+                ws[f'{col}{current_row}'].font = ws[f'{col}{current_row}'].font.copy(bold=True)
+            current_row += 1
+            
+            # Data
+            for name, weight in zip(criteria_names, weights):
+                ws[f'A{current_row}'] = name
+                ws[f'B{current_row}'] = round(weight, 4)
+                ws[f'C{current_row}'] = f"{round(weight * 100, 2)}%"
+                current_row += 1
+            
+            # Consistency ratio
+            current_row += 1
+            ws[f'A{current_row}'] = "Chỉ số nhất quán (CR):"
+            ws[f'B{current_row}'] = round(criteria_matrix_db.consistency_ratio, 4)
+            ws[f'C{current_row}'] = "✓ Chấp nhận" if criteria_matrix_db.consistency_ratio < 0.1 else "⚠ Cần xem xét"
+            current_row += 3
+        
+        # Phần 4: Danh sách tất cả ứng viên
+        if candidates_db:
+            ws[f'A{current_row}'] = "=== DANH SÁCH ỨNG VIÊN ==="
+            ws[f'A{current_row}'].font = ws[f'A{current_row}'].font.copy(bold=True, size=14)
+            current_row += 1
+            
+            # Headers
+            ws[f'A{current_row}'] = "STT"
+            ws[f'B{current_row}'] = "Tên ứng viên"
+            ws[f'C{current_row}'] = "Ghi chú"
+            
+            # Make header bold
+            for col in ['A', 'B', 'C']:
+                ws[f'{col}{current_row}'].font = ws[f'{col}{current_row}'].font.copy(bold=True)
+            current_row += 1
+            
+            # Data
+            for i, candidate in enumerate(candidates_db, 1):
+                ws[f'A{current_row}'] = i
+                ws[f'B{current_row}'] = candidate.full_name
+                ws[f'C{current_row}'] = candidate.notes or ""
+                current_row += 1
+            
+            current_row += 2
+        
+        # Phần 5: Ma trận so sánh tiêu chí (tóm tắt)
+        if criteria_matrix_db and criteria_matrix_db.matrix_data:
+            ws[f'A{current_row}'] = "=== MA TRẬN SO SÁNH TIÊU CHÍ ==="
+            ws[f'A{current_row}'].font = ws[f'A{current_row}'].font.copy(bold=True, size=14)
+            current_row += 1
+            
+            matrix_data = criteria_matrix_db.matrix_data
+            if isinstance(matrix_data, str):
+                matrix_data = json.loads(matrix_data)
+            criteria_names = matrix_data.get("criteria_names_at_creation", [c.criterion_name for c in criteria_list_db])
+            pairwise_matrix = matrix_data.get("matrix", [])
+            
+            if criteria_names and pairwise_matrix:
+                # Headers với tên tiêu chí
+                ws[f'A{current_row}'] = ""
+                for j, name in enumerate(criteria_names):
+                    col_letter = chr(66 + j)  # B, C, D, ...
+                    ws[f'{col_letter}{current_row}'] = name
+                    ws[f'{col_letter}{current_row}'].font = ws[f'{col_letter}{current_row}'].font.copy(bold=True)
+                current_row += 1
+                
+                # Data với tên tiêu chí ở cột đầu
+                for i, (name, row_data) in enumerate(zip(criteria_names, pairwise_matrix), 2):
+                    ws[f'A{current_row}'] = name
+                    ws[f'A{current_row}'].font = ws[f'A{current_row}'].font.copy(bold=True)
+                    for j, value in enumerate(row_data):
+                        col_letter = chr(66 + j)  # B, C, D, ...
+                        ws[f'{col_letter}{current_row}'] = round(value, 3)
+                    current_row += 1
+                
+                current_row += 2
+        
+        # Phần 6: Tóm tắt ma trận so sánh ứng viên (chỉ hiển thị trọng số cuối)
+        if session.get('candidate_pairwise_matrices_details'):
+            ws[f'A{current_row}'] = "=== TRỌNG SỐ ỨNG VIÊN THEO TỪNG TIÊU CHÍ ==="
+            ws[f'A{current_row}'].font = ws[f'A{current_row}'].font.copy(bold=True, size=14)
+            current_row += 1
+            
+            candidate_matrices_details = session.get('candidate_pairwise_matrices_details', [])
+            criteria_names_session = session.get('criteria_names', [])
+            candidate_names_session = session.get('candidate_names', [])
+            
+            if candidate_names_session:
+                # Headers
+                ws[f'A{current_row}'] = "Tiêu chí"
+                for i, candidate_name in enumerate(candidate_names_session):
+                    col_letter = chr(66 + i)  # B, C, D, ...
+                    ws[f'{col_letter}{current_row}'] = candidate_name
+                    ws[f'{col_letter}{current_row}'].font = ws[f'{col_letter}{current_row}'].font.copy(bold=True)
+                ws[f'A{current_row}'].font = ws[f'A{current_row}'].font.copy(bold=True)
+                current_row += 1
+                
+                # Data - trọng số của từng ứng viên theo từng tiêu chí
+                for idx, detail in enumerate(candidate_matrices_details):
+                    if detail is not None:
+                        criterion_name = detail.get('criterion_name', criteria_names_session[idx] if idx < len(criteria_names_session) else f'Tiêu chí {idx+1}')
+                        weights_detail = detail.get('weights', [])
+                        
+                        ws[f'A{current_row}'] = criterion_name
+                        for i, weight in enumerate(weights_detail):
+                            col_letter = chr(66 + i)  # B, C, D, ...
+                            ws[f'{col_letter}{current_row}'] = round(weight, 4)
+                        current_row += 1
+                
+                current_row += 2
+        
+        # Điều chỉnh độ rộng cột
+        ws.column_dimensions['A'].width = 25
+        ws.column_dimensions['B'].width = 20
+        ws.column_dimensions['C'].width = 15
+        
+        # Lưu file tạm và trả về
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            excel_path = tmp.name
+            wb.save(excel_path)
+        
+        return send_file(
+            excel_path,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f'BaoCao_AHP_TongHop_{round_info.round_name.replace(" ", "_")}.xlsx'
+        )
+    
+    except Exception as e:
+        flash(f"Lỗi khi tạo file Excel tổng hợp: {e}", "danger")
+        return redirect(url_for('round_detail', round_id=round_id))
+    finally:
+        if 'excel_path' in locals() and os.path.exists(excel_path):
+            try:
+                os.unlink(excel_path)
+            except Exception as e_unlink:
+                app.logger.error(f"Could not remove temp excel file {excel_path}: {e_unlink}")
+
 if __name__ == '__main__':
-    # Để tạo bảng trong DB lần đầu, bỏ comment dòng dưới và chạy app một lần, sau đó comment lại.
-    # with app.app_context():
-    # db.create_all()
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)

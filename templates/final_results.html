@@ -216,8 +216,12 @@
             <a href="{{ url_for('index_or_create_round') }}" class="btn btn-lg btn-success"><i class="bi bi-plus-circle-fill"></i> Tạo Đợt Tuyển Dụng Mới</a>
             <a href="{{ url_for('history') }}" class="btn btn-lg btn-outline-secondary ms-md-2 mt-2 mt-md-0"><i class="bi bi-clock-history"></i> Xem Lịch Sử</a>
             {% if session.round_id %}
-                <a href="{{ url_for('export_report', round_id=session.round_id) }}" class="btn btn-lg btn-info ms-md-2 mt-2 mt-md-0"><i class="bi bi-file-earmark-pdf-fill"></i> Xuất Báo Cáo PDF</a>
-                <a href="{{ url_for('export_excel', round_id=session.round_id) }}" class="btn btn-lg btn-success ms-md-2 mt-2 mt-md-0"><i class="bi bi-file-earmark-excel-fill"></i> Xuất Dữ Liệu Excel</a>
+                <div class="mt-3">                    <div class="btn-group" role="group" aria-label="Export options">                        <a href="{{ url_for('export_report', round_id=session.round_id) }}" class="btn btn-lg btn-info"><i class="bi bi-file-earmark-pdf-fill"></i> Xuất Báo Cáo PDF</a>
+                        <a href="{{ url_for('export_excel_single_sheet', round_id=session.round_id) }}" class="btn btn-lg btn-primary"><i class="bi bi-file-earmark-spreadsheet"></i> Xuất Excel Tổng Hợp</a>
+                        <a href="{{ url_for('export_excel', round_id=session.round_id) }}" class="btn btn-lg btn-success"><i class="bi bi-file-earmark-excel-fill"></i> Xuất Excel Chi Tiết</a>
+                        <a href="{{ url_for('export_excel_with_charts', round_id=session.round_id) }}" class="btn btn-lg btn-warning"><i class="bi bi-bar-chart-fill"></i> Xuất Excel + Biểu Đồ</a>
+                    </div>
+                </div>
             {% endif %}
         </div>
     </div>
