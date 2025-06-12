@@ -110,23 +110,35 @@ def read_candidates_from_excel(file_path):
 
 def read_matrix_from_excel(file_path, expected_size=None):
     """Đọc ma trận so sánh từ file Excel"""
+    wb = None
     try:
         wb = load_workbook(file_path)
         ws = wb.active
         
         matrix = []
-        # Đọc ma trận từ ô A1
-        max_row = ws.max_row
-        max_col = ws.max_column
         
-        # Nếu có expected_size, chỉ đọc ma trận theo kích thước đó
+        # Kiểm tra xem có header không (A1 trống và B1, C1... có giá trị)
+        has_header = (ws.cell(row=1, column=1).value is None or 
+                     str(ws.cell(row=1, column=1).value).strip() == "")
+        
+        # Nếu có header, ma trận bắt đầu từ B2, ngược lại từ A1
+        start_row = 2 if has_header else 1
+        start_col = 2 if has_header else 1
+        
+        # Tính toán kích thước ma trận
         if expected_size:
-            max_row = min(max_row, expected_size)
-            max_col = min(max_col, expected_size)
+            actual_size = expected_size
+        else:
+            # Tự động phát hiện kích thước ma trận
+            if has_header:
+                actual_size = min(ws.max_row - 1, ws.max_column - 1)
+            else:
+                actual_size = min(ws.max_row, ws.max_column)
         
-        for row in range(1, max_row + 1):
+        # Đọc ma trận
+        for row in range(start_row, start_row + actual_size):
             matrix_row = []
-            for col in range(1, max_col + 1):
+            for col in range(start_col, start_col + actual_size):
                 cell_value = ws.cell(row=row, column=col).value
                 if cell_value is None or cell_value == '':
                     matrix_row.append(1.0)  # Giá trị mặc định
@@ -137,15 +149,79 @@ def read_matrix_from_excel(file_path, expected_size=None):
                         matrix_row.append(1.0)
             matrix.append(matrix_row)
         
-        wb.close()
-        
         # Kiểm tra ma trận vuông
         if matrix and len(matrix) != len(matrix[0]):
             return None, "Ma trận không phải ma trận vuông"
         
+        # Kiểm tra kích thước nếu có expected_size
+        if expected_size and len(matrix) != expected_size:
+            return None, f"Ma trận có kích thước {len(matrix)}x{len(matrix[0])}, cần {expected_size}x{expected_size}"
+        
         return matrix, None
     except Exception as e:
         return None, str(e)
+    finally:
+        if wb:
+            wb.close()
+
+def read_criteria_names_from_excel(file_path, expected_size=None):
+    """Đọc tên tiêu chí từ file Excel (từ hàng 1 và cột 1)"""
+    wb = None
+    try:
+        wb = load_workbook(file_path)
+        ws = wb.active
+        
+        criteria_names = []
+        
+        # Phương pháp 1: Đọc từ hàng 1, bỏ qua cột 1 (A1) vì thường để trống cho ma trận có header
+        # Đọc từ cột 2 trở đi (B1, C1, D1, ...)
+        max_col = ws.max_column
+        header_names = []
+        
+        for col in range(2, max_col + 1):  # Bắt đầu từ cột 2 (B)
+            cell_value = ws.cell(row=1, column=col).value
+            if cell_value and str(cell_value).strip():
+                header_names.append(str(cell_value).strip())
+        
+        # Nếu đọc được đủ tên tiêu chí từ header và phù hợp với expected_size
+        if header_names and (not expected_size or len(header_names) == expected_size):
+            criteria_names = header_names
+        else:
+            # Phương pháp 2: Đọc từ cột 1, bỏ qua hàng 1 (A2, A3, A4, ...)
+            # Đọc từ hàng 2 trở đi
+            max_row = ws.max_row
+            col_names = []
+            
+            for row in range(2, max_row + 1):  # Bắt đầu từ hàng 2
+                cell_value = ws.cell(row=row, column=1).value
+                if cell_value and str(cell_value).strip():
+                    col_names.append(str(cell_value).strip())
+            
+            # Sử dụng tên từ cột nếu phù hợp
+            if col_names and (not expected_size or len(col_names) == expected_size):
+                criteria_names = col_names
+        
+        # Nếu vẫn không đọc được hoặc không đủ số lượng, tạo tên mặc định
+        if not criteria_names or (expected_size and len(criteria_names) != expected_size):
+            if expected_size:
+                criteria_names = [f'Tiêu chí {i+1}' for i in range(expected_size)]
+            else:
+                criteria_names = [f'Tiêu chí {i+1}' for i in range(6)]  # Mặc định 6 tiêu chí
+        
+        # Đảm bảo đúng số lượng
+        if expected_size and len(criteria_names) > expected_size:
+            criteria_names = criteria_names[:expected_size]
+        elif expected_size and len(criteria_names) < expected_size:
+            # Bổ sung tên mặc định nếu thiếu
+            for i in range(len(criteria_names), expected_size):
+                criteria_names.append(f'Tiêu chí {i+1}')
+        
+        return criteria_names, None
+    except Exception as e:
+        return None, str(e)
+    finally:
+        if wb:
+            wb.close()
 
 def create_candidate_template_excel():
     """Tạo file Excel mẫu cho danh sách ứng viên"""
@@ -485,14 +561,17 @@ def setup_criteria_details():
                                    criteria_names_input=criteria_names, 
                                    matrix_values_input=pairwise_matrix_criteria.tolist(), 
                                    round_name=session.get('round_name'))
-    
-    # Cho GET request
-    # Nếu có giá trị cũ trong session (ví dụ user back), hiển thị lại
-    if 'criteria_names' in session and len(session['criteria_names']) == num_criteria :
+      # Cho GET request
+    # Nếu có giá trị cũ trong session (ví dụ user back hoặc sau khi import), hiển thị lại
+    if 'criteria_names' in session and len(session['criteria_names']) == num_criteria:
         criteria_names_input = session['criteria_names']
+        print(f"DEBUG: Loaded criteria_names from session: {criteria_names_input}")  # Debug log
+    else:
+        print(f"DEBUG: No criteria_names in session or wrong length. Session has: {session.get('criteria_names', 'None')}")  # Debug log
+        
     if 'pairwise_matrix_criteria' in session and len(session['pairwise_matrix_criteria']) == num_criteria:
-         matrix_values_input = session['pairwise_matrix_criteria']
-
+        matrix_values_input = session['pairwise_matrix_criteria']
+        print(f"DEBUG: Loaded matrix from session with size: {len(matrix_values_input)}x{len(matrix_values_input[0]) if matrix_values_input else 0}")  # Debug log
 
     return render_template('setup_criteria_details.html', 
                            num_criteria=num_criteria, 
@@ -802,7 +881,6 @@ def import_criteria_matrix():
             filename = secure_filename(file.filename)
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(file_path)
-            
             try:
                 # Đọc ma trận từ Excel
                 matrix_data, error = read_matrix_from_excel(file_path, num_criteria)
@@ -832,12 +910,20 @@ def import_criteria_matrix():
                 cr_criteria = calculate_consistency_ratio(pairwise_matrix_criteria)
                 weights_criteria = calculate_priority_vector(pairwise_matrix_criteria)
                 
-                # Cần có criteria_names từ session hoặc tạo mặc định
-                criteria_names = session.get('criteria_names')
-                if not criteria_names or len(criteria_names) != num_criteria:
-                    criteria_names = [f'Tiêu chí {i+1}' for i in range(num_criteria)]
-                    session['criteria_names'] = criteria_names
+                # Đọc tên tiêu chí từ file Excel
+                criteria_names_from_excel, criteria_error = read_criteria_names_from_excel(file_path, num_criteria)
                 
+                if criteria_names_from_excel and not criteria_error:
+                    criteria_names = criteria_names_from_excel
+                    flash(f'Đã tự động điền tên tiêu chí từ file Excel: {", ".join(criteria_names)}', 'info')
+                else:
+                    # Fallback về tên mặc định nếu không đọc được
+                    criteria_names = session.get('criteria_names')
+                    if not criteria_names or len(criteria_names) != num_criteria:
+                        criteria_names = [f'Tiêu chí {i+1}' for i in range(num_criteria)]
+                    flash('Không thể đọc tên tiêu chí từ file, sử dụng tên mặc định', 'warning')
+                
+                session['criteria_names'] = criteria_names
                 session['pairwise_matrix_criteria'] = pairwise_matrix_criteria.tolist()
                 session['weights_criteria'] = weights_criteria.tolist()
                 session['cr_criteria'] = cr_criteria
@@ -869,9 +955,10 @@ def import_criteria_matrix():
                 
                 if cr_criteria < 0.1:
                     flash(f'Đã import thành công ma trận tiêu chí (CR = {cr_criteria:.4f})', 'success')
-                    return redirect(url_for('setup_candidates_count'))
+                    return redirect(url_for('setup_criteria_details'))
                 else:
                     flash(f'Ma trận đã được import nhưng CR ({cr_criteria:.4f}) >= 0.1. Vui lòng kiểm tra lại.', 'warning')
+                    return redirect(url_for('setup_criteria_details'))
                 
             except Exception as e:
                 flash(f'Lỗi xử lý file: {str(e)}', 'danger')
