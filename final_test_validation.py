@@ -203,7 +203,8 @@ def main():
     print("=" * 50)
     
     # Change to the correct directory
-    os.chdir('/Users/thanhtruong/cnmp1/ahp-main')
+    os.chdir(r'C:\HocTap\HTRQD\ahp')
+    # os.chdir('/Users/thanhtruong/cnmp1/ahp-main')
     
     tests = [
         test_candidate_import_export,

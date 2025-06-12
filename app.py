@@ -35,7 +35,7 @@ def allowed_file(filename):
 # Cấu hình kết nối MySQL
 # app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:Theanh412%40@localhost:3306/recruitment_ahp'
 # app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:Theanh412%40@localhost:3306/recruitment_ahp'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:123456@localhost:3306/recruitment_ahp'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)

@@ -21,7 +21,8 @@ def main():
     print("🔍 Excel Import Functionality Status Report")
     print("=" * 55)
     
-    os.chdir('/Users/thanhtruong/cnmp1/ahp-main')
+    os.chdir(r'C:\HocTap\HTRQD\ahp')
+    # os.chdir('/Users/thanhtruong/cnmp1/ahp-main')
     
     # 1. Test candidate import
     print("\n1️⃣  CANDIDATE IMPORT TEST")
