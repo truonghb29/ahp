@@ -84,8 +84,8 @@ class CandidateScore(db.Model):
 
 # --- CÁC HÀM HELPER VÀ GIÁ TRỊ RI ---
 ri_values = {
-    1: 0.00, 2: 0.00, 3: 0.52, 4: 0.89, 5: 1.11, 6: 1.25,
-    7: 1.35, 8: 1.40, 9: 1.45, 10: 1.49, 11: 1.51, 12: 1.54,
+    1: 0.00, 2: 0.00, 3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24,
+    7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49, 11: 1.51, 12: 1.48,
     13: 1.56, 14: 1.57, 15: 1.59
 }
 
@@ -273,12 +273,6 @@ def calculate_priority_vector(matrix):
     
     col_sums = np.sum(matrix, axis=0)
     if np.any(col_sums == 0): # Tránh chia cho 0
-        # Trong AHP, điều này không nên xảy ra nếu ma trận được nhập đúng
-        # Có thể trả về trọng số bằng nhau hoặc báo lỗi
-        # For now, if a column sum is zero, it implies an issue with matrix construction
-        # or that the matrix is not a valid Saaty matrix.
-        # Returning equal weights or raising an error might be options.
-        # For robustness, let's assume if this happens, priority vector calculation is problematic.
         return np.full(matrix.shape[0], 1/matrix.shape[0]) # Default to equal weights as a fallback
 
     normalized_matrix = matrix / col_sums
@@ -298,22 +292,14 @@ def calculate_consistency_ratio(matrix):
     if weights.size == 0 or weights.shape[0] != n: # Kiểm tra weights hợp lệ
         return float('inf') 
 
-    # Tính lambda_max
-    # Cách 1: weighted_sum_vector = matrix @ weights 
-    #          lambda_max = np.mean(weighted_sum_vector / weights) # Có thể không ổn định nếu weights có phần tử 0
-    # Cách 2: (Thường dùng trong AHP)
-    # Eigenvector method: Ax = lambda_max * x
-    # lambda_max = sum of (each element of (matrix @ weights) / corresponding element of weights) / n
-    # Or, more directly related to consistency:
     aw = np.dot(matrix, weights)
-    # Ensure no division by zero if any weight is zero (should not happen with valid priority vector)
+    
     if np.any(weights == 0):
-        lambda_max = n # Fallback, implies perfect consistency or error in weights
+        lambda_max = n 
     else:
         lambda_max = np.mean(aw / weights)
 
-
-    if n - 1 == 0: # Should be caught by n <= 2, but as a safeguard
+    if n - 1 == 0: 
         return 0.0 if lambda_max == n else float('inf')
         
     ci = (lambda_max - n) / (n - 1)
